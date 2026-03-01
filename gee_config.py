@@ -203,6 +203,8 @@ ML_PARAMS = {
         'n_estimators': 500,
         'max_depth': 8,
         'learning_rate': 0.05,
+        'num_leaves': 63,
+        'min_child_samples': 20,
         'subsample': 0.8,
         'colsample_bytree': 0.8,
         'random_state': 42,

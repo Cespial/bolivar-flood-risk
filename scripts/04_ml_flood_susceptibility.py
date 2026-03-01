@@ -40,6 +40,8 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
     roc_auc_score,
+    cohen_kappa_score,
+    brier_score_loss,
     confusion_matrix,
     classification_report,
 )
@@ -164,6 +166,43 @@ def prepare_training_data(
 # SPATIAL CROSS-VALIDATION
 # ===========================================================================
 
+def _assign_zodes(lon: float, lat: float) -> str:
+    """
+    Assign a sample point to its ZODES subregion based on proximity.
+
+    Uses a simplified centroid-based assignment: each ZODES is
+    represented by the approximate centroid of its constituent
+    municipalities, and the sample is assigned to the nearest ZODES.
+
+    Parameters
+    ----------
+    lon, lat : float
+        Longitude and latitude of the sample point.
+
+    Returns
+    -------
+    str
+        ZODES name.
+    """
+    # Approximate centroids (lon, lat) for each ZODES in Bolivar
+    _ZODES_CENTROIDS = {
+        'Dique': (-75.35, 10.25),
+        'Montes de Maria': (-75.10, 9.85),
+        'Mojana': (-74.75, 8.85),
+        'Depresion Momposina': (-74.55, 9.25),
+        'Loba': (-74.10, 8.95),
+        'Magdalena Medio': (-73.90, 7.95),
+    }
+    best_zodes = 'Dique'
+    best_dist = float('inf')
+    for zodes_name, (cx, cy) in _ZODES_CENTROIDS.items():
+        d = (lon - cx) ** 2 + (lat - cy) ** 2
+        if d < best_dist:
+            best_dist = d
+            best_zodes = zodes_name
+    return best_zodes
+
+
 def spatial_cross_validation(
     df: pd.DataFrame,
     X: np.ndarray,
@@ -173,13 +212,20 @@ def spatial_cross_validation(
     seed: int = cfg.CV_PARAMS["random_state"],
 ) -> List[Tuple[np.ndarray, np.ndarray]]:
     """
-    Generate spatial block cross-validation folds.
+    Generate ZODES-based spatial cross-validation folds.
 
     To reduce spatial autocorrelation between train and test sets, this
-    method divides the study area into latitudinal strips and uses each
-    strip as a test fold.
+    method assigns each sample to one of the six ZODES (Zonas de
+    Desarrollo Economico y Social) subregions of Bolivar, then groups
+    them into five folds as follows:
 
-    If latitude information is not available (no geometry column), falls
+      - Fold 1: Dique (coastal municipalities)
+      - Fold 2: Montes de Maria + Mojana (transitional terrain)
+      - Fold 3: Depresion Momposina + Loba (riverine floodplain)
+      - Fold 4: Magdalena Medio (southern interior)
+      - Fold 5: Cross-ZODES holdout (random 20% from each ZODES)
+
+    If spatial information is not available (no geometry column), falls
     back to standard stratified K-fold.
 
     Parameters
@@ -191,9 +237,9 @@ def spatial_cross_validation(
     y : np.ndarray
         Labels.
     n_splits : int
-        Number of CV folds.
+        Number of CV folds (fixed at 5 for ZODES-based grouping).
     lat_col : str
-        Column name containing geometry or latitude.
+        Column name containing geometry (GEE export format).
     seed : int
         Random seed.
 
@@ -202,33 +248,78 @@ def spatial_cross_validation(
     list[tuple[np.ndarray, np.ndarray]]
         List of (train_indices, test_indices) tuples.
     """
-    # Try to extract latitude from GEE-exported geometry column
-    latitudes = None
+    # Try to extract coordinates from GEE-exported geometry column
+    coords = None
     if lat_col in df.columns:
         try:
-            geo_series = df[lat_col].apply(
-                lambda g: json.loads(g)["coordinates"][1] if isinstance(g, str) else None
+            geo_parsed = df[lat_col].apply(
+                lambda g: json.loads(g)["coordinates"] if isinstance(g, str) else None
             )
-            latitudes = geo_series.dropna().values
-            if len(latitudes) == len(df):
-                log.info("Latitude extracted from geometry column for spatial CV")
+            lons = geo_parsed.apply(lambda c: c[0] if c is not None else None)
+            lats = geo_parsed.apply(lambda c: c[1] if c is not None else None)
+            if lons.notna().sum() == len(df) and lats.notna().sum() == len(df):
+                coords = list(zip(lons.values, lats.values))
+                log.info("Coordinates extracted from geometry column for ZODES-based spatial CV")
         except (json.JSONDecodeError, KeyError, TypeError):
-            latitudes = None
+            coords = None
 
-    if latitudes is not None and len(latitudes) == len(df):
-        # Spatial blocking by latitude quantiles
-        lat_quantiles = np.percentile(latitudes, np.linspace(0, 100, n_splits + 1))
-        fold_assignments = np.digitize(latitudes, lat_quantiles[1:-1])
+    if coords is not None:
+        # Assign each sample to a ZODES
+        zodes_labels = [_assign_zodes(lon, lat) for lon, lat in coords]
+        zodes_arr = np.array(zodes_labels)
 
+        # Define fold membership:
+        #   Fold 0: Dique
+        #   Fold 1: Montes de Maria + Mojana
+        #   Fold 2: Depresion Momposina + Loba
+        #   Fold 3: Magdalena Medio
+        #   Fold 4: cross-ZODES holdout (random 20% from each ZODES)
+        fold_map = {
+            'Dique': 0,
+            'Montes de Maria': 1,
+            'Mojana': 1,
+            'Depresion Momposina': 2,
+            'Loba': 2,
+            'Magdalena Medio': 3,
+        }
+
+        fold_assignments = np.full(len(df), -1, dtype=int)
+        rng = np.random.RandomState(seed)
+
+        for zodes_name in cfg.SUBREGIONS:
+            zodes_mask = zodes_arr == zodes_name
+            zodes_indices = np.where(zodes_mask)[0]
+            if len(zodes_indices) == 0:
+                continue
+
+            # Reserve 20% of each ZODES for the cross-ZODES holdout fold (Fold 4)
+            n_holdout = max(1, int(0.2 * len(zodes_indices)))
+            holdout_indices = rng.choice(zodes_indices, size=n_holdout, replace=False)
+            remaining_indices = np.setdiff1d(zodes_indices, holdout_indices)
+
+            fold_assignments[holdout_indices] = 4
+            fold_assignments[remaining_indices] = fold_map.get(zodes_name, 0)
+
+        # Build fold tuples
         folds = []
-        for fold_id in range(n_splits):
+        for fold_id in range(5):
             test_idx = np.where(fold_assignments == fold_id)[0]
-            train_idx = np.where(fold_assignments != fold_id)[0]
+            train_idx = np.where((fold_assignments != fold_id) & (fold_assignments >= 0))[0]
             if len(test_idx) == 0:
                 continue
             folds.append((train_idx, test_idx))
 
-        log.info("Spatial CV: %d folds by latitude blocks", len(folds))
+        fold_desc = [
+            "Dique", "Montes de Maria + Mojana",
+            "Depresion Momposina + Loba", "Magdalena Medio",
+            "Cross-ZODES holdout (20%)",
+        ]
+        for i, (tr, te) in enumerate(folds):
+            log.info("  Fold %d (%s): train=%d, test=%d",
+                     i + 1, fold_desc[i] if i < len(fold_desc) else "?",
+                     len(tr), len(te))
+
+        log.info("Spatial CV: %d folds by ZODES grouping", len(folds))
         return folds
     else:
         # Fallback: stratified K-fold
@@ -367,6 +458,8 @@ def _evaluate_fold(
         "recall": float(recall_score(y_true, y_pred, zero_division=0)),
         "f1": float(f1_score(y_true, y_pred, zero_division=0)),
         "auc_roc": float(roc_auc_score(y_true, y_prob)),
+        "kappa": float(cohen_kappa_score(y_true, y_pred)),
+        "brier_score": float(brier_score_loss(y_true, y_prob)),
     }
 
 

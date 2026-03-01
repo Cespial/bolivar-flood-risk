@@ -136,7 +136,7 @@ def compute_hydrologic_features(region: ee.Geometry) -> ee.Image:
 
     - **dist_rivers** : Euclidean distance to nearest river pixel (m), derived
       from JRC permanent water (occurrence >= 75 %).
-    - **drainage_density** : Proportion of river pixels in a 1-km
+    - **drainage_density** : Proportion of river pixels in a 2-km
       neighbourhood, approximating drainage density.
 
     Parameters
@@ -165,9 +165,9 @@ def compute_hydrologic_features(region: ee.Geometry) -> ee.Image:
     )
     dist_rivers = dist_sq.sqrt().multiply(30).rename("dist_rivers").clip(region)
 
-    # Drainage density: fraction of river pixels within a 1 km radius
+    # Drainage density: fraction of river pixels within a 2 km radius
     drainage_density = river_mask.focal_mean(
-        radius=1000,
+        radius=2000,
         kernelType="circle",
         units="meters",
     ).rename("drainage_density").clip(region)
