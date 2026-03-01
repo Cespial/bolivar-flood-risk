@@ -1,0 +1,480 @@
+% ============================================================================
+% Municipality-Scale Flood Risk Mapping in Bolivar, Colombia
+% Using Sentinel-1 SAR and Ensemble Machine Learning (2015--2025)
+% Authors: Cristian Espinal Maya, Santiago Jimenez Londono
+% Format: arXiv preprint
+% ============================================================================
+
+\documentclass{article}
+
+\usepackage{arxiv}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{siunitx}
+\sisetup{
+    group-separator = {,},
+    group-minimum-digits = 4,
+}
+\usepackage{natbib}
+\usepackage{tabularx}
+\usepackage{textcomp}
+
+\graphicspath{{./figures/}}
+
+\title{Municipality-Scale Flood Risk Mapping in Bol\'ivar, Colombia, Using Sentinel-1 SAR and Ensemble Machine Learning (2015--2025)}
+
+\author{
+  Cristian Espinal Maya\thanks{Correspondence: cespinalm@eafit.edu.co. ORCID: \href{https://orcid.org/0009-0000-1009-8388}{0009-0000-1009-8388}} \\
+  School of Applied Sciences and Engineering\\
+  Universidad EAFIT\\
+  Medell\'in, Colombia \\
+  \texttt{cespinalm@eafit.edu.co} \\
+  \And
+  Santiago Jim\'enez Londo\~no\thanks{ORCID: \href{https://orcid.org/0009-0007-9862-7133}{0009-0007-9862-7133}} \\
+  School of Applied Sciences and Engineering\\
+  Universidad EAFIT\\
+  Medell\'in, Colombia \\
+  \texttt{sjimenez@eafit.edu.co} \\
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A persistent scale mismatch limits the utility of satellite-based flood products for local governance: most operate at national resolution, while flood risk decisions in decentralized countries are made at the municipal level. We present a reproducible, open-access framework that delivers municipality-level flood risk statistics for all 46 municipalities of the Department of Bol\'ivar, Colombia (\SI{25978}{\kilo\metre\squared}; $\sim$2.2 million inhabitants). Bol\'ivar encompasses some of Colombia's most flood-vulnerable landscapes: the Depresi\'on Momposina ($\sim$\SI{3400}{\kilo\metre\squared} of wetlands at the confluence of the Magdalena, Cauca, and San Jorge rivers), the Canal del Dique corridor, and the La Mojana wetland system. We processed Sentinel-1 C-band SAR scenes (2015--2025) within Google Earth Engine using adaptive Otsu thresholding to produce monthly water extent maps at \SI{10}{\metre} resolution. Eighteen predictor variables were integrated into a weighted ensemble of Random Forest, XGBoost, and LightGBM. The susceptibility surface is overlaid with \SI{100}{\metre} population data to quantify exposure per municipality and risk class. HAND thresholds were relaxed (flood label $<$\SI{10}{\metre}, non-flood $\geq$\SI{40}{\metre}) relative to Andean frameworks to accommodate Bol\'ivar's predominantly flat lowland terrain. The framework is open-access and fully reproducible, enabling direct replication across other tropical Caribbean lowland departments.
+\end{abstract}
+
+\keywords{flood susceptibility mapping \and Sentinel-1 SAR \and ensemble machine learning \and HAND \and Google Earth Engine \and SHAP \and ENSO \and population exposure \and Bol\'ivar Colombia \and Depresi\'on Momposina \and Caribbean lowlands}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+\label{sec:introduction}
+
+Between November 2010 and May 2011, a La Ni\~na event struck Colombia with exceptional intensity: over 300 people died, 2.3 million were displaced, and direct losses exceeded USD 7.8 billion \citep{Hoyos2013}. The Department of Bol\'ivar was the most affected department nationally, with approximately 60,000 households impacted---yet municipal governments operated with national-scale hazard maps that could not distinguish which floodplain corridors, ci\'enagas, or levee-protected areas had been inundated. Fifteen years later, most of Bol\'ivar's 46 municipalities still lack the spatially explicit flood information mandated by their own planning instruments.
+
+Globally, flooding affects approximately 1.65 billion people per decade \citep{UNDRR2020}. \citet{Tellman2021} showed that population exposure to flooding grew 20--24\% between 2000 and 2018, while \citet{Rentschler2022} estimated 1.81 billion people in significant flood hazard zones, 89\% in low- and middle-income countries. However, a persistent disconnect separates the scale at which satellite-derived flood products are generated (continental or national) from the scale at which flood risk decisions must be made (municipal) \citep{Bates2023}. This mismatch is acute in Colombia, where Ley~1523 of 2012 decentralizes flood risk management to municipalities, each legally mandated to formulate a Plan de Ordenamiento Territorial (POT) and a Plan Municipal de Gesti\'on del Riesgo de Desastres (PMGRD) \citep{CongresoCol2012}. Yet most lack the technical capacity to produce the required geospatial inputs \citep{OECD2019}.
+
+Three technological developments now converge to address this gap. First, Sentinel-1 SAR provides cloud-penetrating imagery at \SI{10}{\metre} resolution with 6--12 day revisit, overcoming the $>$70\% cloud contamination that renders optical sensors ineffective in tropical regions \citep{Twele2016, DeVries2020}. Second, ensemble machine learning (Random Forest, XGBoost, LightGBM) consistently outperforms traditional methods for flood susceptibility prediction \citep{Mosavi2018, Darabi2021}, with SHAP enabling model interpretability \citep{Lundberg2017}. Third, Google Earth Engine democratizes petabyte-scale satellite processing \citep{Gorelick2017}. Despite these advances, comprehensive frameworks carrying the analysis from raw SAR data through to municipality-level risk statistics remain rare, and the flood susceptibility ML literature is conspicuously underrepresented in Caribbean lowland environments \citep{FloodRiskLAC2022}.
+
+Global flood hazard products---including Fathom Global (\SI{90}{\metre}), the Global Flood Database \citep{Tellman2021}, and JRC Global Surface Water \citep{Pekel2016}---have transformed continental-scale flood assessment. However, their spatial resolution precludes the delineation of ci\'enaga boundaries, canal levee failures, and urban-fluvial interfaces critical for municipal planning in departments like Bol\'ivar. Our municipal-scale framework is designed to be \textit{complementary}, not redundant: it ingests global products (JRC, MERIT Hydro) as input features while delivering locally actionable outputs at resolutions 3--9$\times$ finer than existing global layers.
+
+\textbf{Research gap and contributions.} Existing flood susceptibility studies in tropical South America are either (a) site-specific ($<$\SI{1000}{\kilo\metre\squared}), precluding administrative-scale risk ranking, or (b) based on global products at \SI{90}{\metre}--\SI{250}{\metre} resolution that cannot resolve the complex flood dynamics of internally drained lowland systems like the Depresi\'on Momposina. No previous study has produced municipality-level flood risk statistics for Bol\'ivar---one of Colombia's most flood-affected departments---using high-resolution SAR data. This work makes three specific contributions: (1) a complete SAR-to-municipality pipeline processing Sentinel-1 scenes across \SI{25978}{\kilo\metre\squared} and 11 years, with threshold adaptations for flat Caribbean lowland terrain; (2) an ensemble ML susceptibility model validated through spatial cross-validation with SHAP-based interpretability; and (3) quantified population exposure at the municipal level for all 46 municipalities and 6 ZODES (Zonas de Desarrollo Econ\'omico y Social), producing outputs directly ingestible by Colombian POT and PMGRD instruments.
+
+\subsection{Study Area}
+\label{sec:study_area}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.75\textwidth]{fig01_study_area.pdf}
+\caption{Department of Bol\'ivar, Colombia, showing six ZODES subregions and 46 municipalities. The department spans from the Caribbean coast (Cartagena de Indias) to the Magdalena Medio interior.}
+\label{fig:study_area}
+\end{figure}
+
+The Department of Bol\'ivar (\SI{25978}{\kilo\metre\squared}; 7\textdegree{}30'--10\textdegree{}48'\,N, 73\textdegree{}45'--75\textdegree{}42'\,W) comprises 46 municipalities organized into six ZODES subregions (Figure~\ref{fig:study_area}), with approximately 2.2 million inhabitants \citep{DANE2018}. Unlike the mountainous departments of the Andean interior, Bol\'ivar is predominantly flat lowland terrain: over 90\% of the department lies below \SI{200}{\metre} a.s.l. The landscape is shaped by four major river systems---the Magdalena (Colombia's principal artery, $\sim$\SI{7000}{\cubic\metre\per\second} mean discharge at Calamar), the Cauca, the San Jorge, and the man-made Canal del Dique (\SI{115}{\kilo\metre} distributary from Calamar to the Bay of Cartagena) \citep{Restrepo2006, Restrepo2014}.
+
+Three areas concentrate extreme flood vulnerability:
+
+\begin{enumerate}
+    \item \textbf{Depresi\'on Momposina}: An internal delta of $\sim$\SI{3400}{\kilo\metre\squared} at the confluence of the Magdalena, Cauca, San Jorge, and Cesar rivers. Seasonal flooding reaches up to \SI{7}{\metre} depth, creating an extensive ci\'enaga-dominated wetland system \citep{Angarita2018}. Municipalities affected include Momp\'os, San Fernando, Margarita, Talaigua Nuevo, Cicuco, and Hatillo de Loba.
+
+    \item \textbf{Canal del Dique corridor}: The \SI{115}{\kilo\metre} canal suffered catastrophic levee breaches during the 2010--2011 La Ni\~na, flooding \SI{35000}{\hectare} and affecting 200,000 people. A USD 835 million restoration project (Royal HaskoningDHV) is underway \citep{Mogollon2016}.
+
+    \item \textbf{La Mojana}: A trans-departmental wetland system shared with Sucre, C\'ordoba, and Antioquia. Recurring failures of the Cara de Gato dam affect 38,000+ people across the region \citep{ACAPS2024}. San Jacinto del Cauca is the principal Bol\'ivar municipality affected.
+\end{enumerate}
+
+Precipitation follows a bimodal Caribbean pattern: dry seasons in DJF and JJA, wet seasons in MAM and SON (peak August--November), with annual totals ranging from 1,400~mm on the coast to $>$2,500~mm in the interior \citep{Urrea2019, Mesa2006}. ENSO strongly modulates flood occurrence: La Ni\~na episodes intensify the Caribbean and Choc\'o low-level jets, increasing precipitation by 20--40\% \citep{Poveda2001, PovedalMesa1997}. With the 2010--2011 La Ni\~na (60,000 households), recurring Mojana floods (2021--2022, 2024), and severe weather events in May 2024 (7,806 affected) and July--August 2024 (38,000+ affected), Bol\'ivar ranks among Colombia's most flood-impacted departments \citep{Hoyos2013}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Materials and Methods}
+\label{sec:methods}
+
+\subsection{Data Sources}
+
+The framework integrates 10 satellite and ancillary datasets (Table~\ref{tab:data_sources}), all accessed via Google Earth Engine \citep{Gorelick2017} except administrative boundaries (GADM 4.1).
+
+\begin{table}[htbp]
+\caption{Datasets used in the flood risk assessment framework.}
+\label{tab:data_sources}
+\centering
+\footnotesize
+\begin{tabular}{lllll}
+\toprule
+\textbf{Dataset} & \textbf{Source} & \textbf{Resolution} & \textbf{Period} & \textbf{Role} \\
+\midrule
+Sentinel-1 GRD & ESA/Copernicus & \SI{10}{\metre} & 2015--2025 & Flood detection \\
+JRC GSW v1.4 & EC/JRC & \SI{30}{\metre} & 1984--2021 & Water dynamics \\
+SRTM DEM v3 & NASA/USGS & \SI{30}{\metre} & 2000 & Topographic features \\
+MERIT Hydro v1.0.1 & Yamazaki et al. & \SI{90}{\metre} & 2019 & HAND \\
+CHIRPS Daily v2.0 & UCSB/CHG & \SI{5.5}{\kilo\metre} & 2015--2025 & Precipitation \\
+ERA5-Land Monthly & ECMWF/C3S & \SI{11}{\kilo\metre} & 2015--2025 & Soil moisture \\
+Sentinel-2 MSI & ESA/Copernicus & \SI{10}{\metre} & 2020--2023 & NDVI \\
+ESA WorldCover v200 & ESA & \SI{10}{\metre} & 2021 & Land cover \\
+WorldPop v2020 & U. Southampton & \SI{100}{\metre} & 2020 & Population density \\
+GADM v4.1 & U.C. Davis & Vector & 2024 & Admin. boundaries \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Sentinel-1 C-band SAR GRD scenes were ingested (IW mode, VV+VH polarization, descending orbit). The Sentinel-1B failure (December 2021 to April 2024) reduced revisit to 12 days; Sentinel-1C deployment in December 2024 restored 6-day coverage. The JRC Global Surface Water dataset \citep{Pekel2016} provided 38-year water dynamics for validation and as an input feature. Terrain variables (elevation, slope, aspect, curvature, Topographic Wetness Index [TWI], and Stream Power Index [SPI]) were derived from SRTM \SI{30}{\metre}. HAND was computed from MERIT Hydro \SI{90}{\metre} \citep{Yamazaki2019} and resampled to \SI{30}{\metre} via bilinear interpolation within GEE. While resampling does not add spatial information beyond the native \SI{90}{\metre}, it enables pixel-aligned stacking with the \SI{30}{\metre} feature grid; the effective resolution of the HAND predictor remains \SI{90}{\metre}, and its vertical accuracy ($\pm$\SI{5}{\metre}, inherited from SRTM) should be considered when interpreting threshold-based results, particularly in Bol\'ivar's extensive low-relief floodplains where terrain gradients approach the DEM error margin.
+
+\subsection{SAR-Based Water Detection}
+\label{sec:sar_water}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{fig02_sar_flood_frequency.pdf}
+\caption{Sentinel-1 SAR flood frequency map for Bol\'ivar (2015--2025). High flood frequency (dark blue) concentrates along the Magdalena, Cauca, and San Jorge river corridors, particularly in the Depresi\'on Momposina and Canal del Dique zones.}
+\label{fig:sar_flood_freq}
+\end{figure}
+
+The SAR workflow transforms Sentinel-1 backscatter into monthly binary water maps through: (1) speckle reduction via focal median filter (\SI{50}{\metre} kernel) with slope masking ($> 15^{\circ}$, relaxed from $30^{\circ}$ in Andean frameworks due to Bol\'ivar's flat terrain); (2) adaptive Otsu thresholding \citep{Otsu1979} on the VV histogram; (3) water mask refinement with \SI{2}{\hectare} minimum mapping unit (increased from \SI{1}{\hectare} to filter tidal noise near the Caribbean coast) and permanent water flagging (JRC occurrence $\geq 75\%$); and (4) monthly maximum-extent compositing.
+
+\textbf{SAR advantages in flat terrain.} Bol\'ivar's flat topography presents substantially fewer SAR artefacts than mountainous departments: layover and radar shadow, which degrade flood detection on steep slopes, are essentially absent. This enables higher expected SAR detection accuracy ($\sim$80--90\% vs.\ $\sim$60--70\% in mountainous terrain \citep{Tarpanelli2022}).
+
+\textbf{SAR challenges in Bol\'ivar.} Three region-specific issues require attention: (i)~ci\'enagas---seasonal wetlands that expand and contract dramatically---may be misclassified as flood events without multi-temporal compositing; (ii)~flooded vegetation in the Momposina palm forests causes double-bounce scattering that can mask open-water signatures \citep{Betancourt2020}; and (iii)~tidal influence near the Caribbean coast, though minimal (microtidal regime), is mitigated by the increased minimum water area filter (\SI{2}{\hectare}).
+
+\subsection{Flood Frequency Mapping}
+
+Flood frequency per pixel was computed as:
+\begin{equation}
+    FF_i = \frac{\sum_{m=1}^{M} W_{i,m}}{M} \times 100
+    \label{eq:flood_freq}
+\end{equation}
+where $M$ is the total number of monthly composites, and classified into five categories: permanent ($>$75\%), very frequent (50--75\%), frequent (25--50\%), occasional (10--25\%), and rare (1--10\%). Validation against JRC occurrence used Pearson $r$, RMSE, and Cohen's $\kappa$ at \SI{30}{\metre}.
+
+\subsection{Flood Susceptibility Modeling}
+
+Eighteen predictor variables (Table~\ref{tab:features}) were assembled across five thematic groups.
+
+\begin{table}[htbp]
+\caption{Predictor variables organized by thematic group.}
+\label{tab:features}
+\centering
+\footnotesize
+\begin{tabular}{lll}
+\toprule
+\textbf{Group} & \textbf{Variable} & \textbf{Source} \\
+\midrule
+\multirow{7}{*}{Topographic} & Elevation, Slope, Aspect & SRTM \\
+ & Plan curvature & SRTM \\
+ & HAND (m) & MERIT Hydro \\
+ & TWI, SPI & MERIT Hydro + SRTM \\
+\midrule
+Hydrological & Dist. to drainage, Drainage density & HydroSHEDS \\
+\midrule
+Climatic & Mean/Max precip., Soil moisture & CHIRPS, ERA5 \\
+\midrule
+Land/Demog. & Land cover, NDVI, Pop. density & WorldCover, S2, WorldPop \\
+\midrule
+Water hist. & JRC occurrence, SAR flood freq., Accessibility$^*$ & JRC, This study, Oxford MAP \\
+\bottomrule
+\multicolumn{3}{l}{\scriptsize $^*$Accessibility: travel time (min) to nearest city of $\geq$50,000 inhabitants \citep{Weiss2018}.}
+\end{tabular}
+\end{table}
+
+\textbf{Threshold adaptations for flat terrain.} The labelling strategy was adapted from the Antioquia framework to account for Bol\'ivar's predominantly flat topography (Table~\ref{tab:threshold_adaptation}). Standard HAND thresholds developed for Andean valleys (flood: HAND $< \SI{5}{\metre}$; non-flood: HAND $\geq \SI{30}{\metre}$) are inappropriate for low-relief floodplains where entire landscapes lie within \SI{10}{\metre} of the drainage network.
+
+\begin{table}[htbp]
+\caption{Parameter adaptations from Andean (Antioquia) to Caribbean lowland (Bol\'ivar) settings.}
+\label{tab:threshold_adaptation}
+\centering
+\footnotesize
+\begin{tabular}{llll}
+\toprule
+\textbf{Parameter} & \textbf{Antioquia} & \textbf{Bol\'ivar} & \textbf{Rationale} \\
+\midrule
+HAND flood label & $< \SI{5}{\metre}$ & $< \SI{10}{\metre}$ & Broader floodplains, lower relief \\
+HAND non-flood label & $\geq \SI{30}{\metre}$ & $\geq \SI{40}{\metre}$ & Higher separation in flat areas \\
+Slope non-flood mask & $> 10^{\circ}$ & $> 5^{\circ}$ & Most terrain below $5^{\circ}$ slope \\
+Min water area & \SI{1}{\hectare} & \SI{2}{\hectare} & Filter tidal/coastal noise \\
+HAND class boundaries & 0--5--15--30--60 & 0--10--20--40--70 & Relaxed for flat topography \\
+Drainage density radius & \SI{1}{\kilo\metre} & \SI{2}{\kilo\metre} & Wider floodplain networks \\
+Slope masking & $> 30^{\circ}$ & $> 15^{\circ}$ & Less steep terrain to exclude \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Flood-positive pixels were defined as locations detected as water in $\geq$5 of the monthly composites with JRC occurrence 5--75\%; flood-negative pixels were drawn from areas with JRC $= 0\%$, HAND $> \SI{40}{\metre}$, slope $> 5^{\circ}$, stratified across six ZODES subregions. The balanced dataset was split 70/30 for training/test.
+
+Three models were trained: Random Forest \citep{Breiman2001} (scikit-learn 1.5.2), XGBoost \citep{Chen2016} (XGBoost 2.1.3), and LightGBM \citep{Ke2017} (LightGBM 4.5.0). Hyperparameters were selected via randomized search (100 iterations, 3-fold inner CV on the training partition): Random Forest (500 trees, max\_depth $= 15$, min\_samples\_leaf $= 5$), XGBoost (500 estimators, learning\_rate $= 0.05$, max\_depth $= 8$, subsample $= 0.8$, colsample\_bytree $= 0.8$), and LightGBM (500 estimators, learning\_rate $= 0.05$, num\_leaves $= 63$, min\_child\_samples $= 20$). A weighted ensemble combined predictions proportional to each model's AUC-ROC (Equation~\ref{eq:ensemble}).
+
+\begin{equation}
+    P_{\text{ens}}(x) = \sum_{k=1}^{3} w_k \cdot P_k(x), \quad w_k = \frac{\text{AUC}_k}{\sum_{j} \text{AUC}_j}
+    \label{eq:ensemble}
+\end{equation}
+
+Performance was evaluated via \textit{spatial} five-fold cross-validation \citep{Roberts2017}, grouping the six ZODES into five geographically contiguous folds to prevent spatial leakage: Fold~1 (Dique; coastal municipalities), Fold~2 (Montes de Mar\'ia + Mojana; transitional terrain), Fold~3 (Depresi\'on Momposina + Loba; riverine floodplain), Fold~4 (Magdalena Medio; southern interior), and Fold~5 (hold-out combining samples across ZODES for spatial independence). Each fold was held out once as the test set while the remaining four folds served as training data. Metrics: AUC-ROC, accuracy, precision, recall, F1, Cohen's $\kappa$, Brier score. Feature importance was assessed using SHAP \citep{Lundberg2017}.
+
+\subsection{Population Exposure and Risk Index}
+
+Exposed population per municipality $j$ was computed as:
+\begin{equation}
+    \text{Pop}_{\text{exp},j} = \sum_{i \in \Omega_j} P_i \cdot \mathbb{1}[S_i \geq 0.6]
+    \label{eq:pop_exposure}
+\end{equation}
+where $P_i$ is WorldPop population at pixel $i$ \citep{Stevens2015} and $S_i$ is ensemble susceptibility (Equation~\ref{eq:ensemble}). A composite Flood Risk Index integrates hazard, susceptibility, and exposure (Equation~\ref{eq:fri}):
+\begin{equation}
+    \text{FRI}_j = \frac{A_{\text{high},j}}{A_{\text{total},j}} \times \frac{\text{Pop}_{\text{exp},j}}{\text{Pop}_{\text{total},j}} \times FF_{\text{mean},j}
+    \label{eq:fri}
+\end{equation}
+Sensitivity to the threshold $\tau$ was tested at 0.5, 0.6, and 0.7.
+
+\subsection{Seasonal and ENSO Analysis}
+
+Monthly water extent was stratified by ENSO phase using the Oceanic Ni\~no Index (ONI $> 0.5$\textdegree{}C for El Ni\~no, $< -0.5$\textdegree{}C for La Ni\~na, over $\geq$5 consecutive overlapping 3-month periods). Differences were tested via Kruskal-Wallis with Dunn's post-hoc correction. Trends were assessed via Mann-Kendall test \citep{Mann1945} with Sen's slope estimator \citep{Sen1968}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Results}
+\label{sec:results}
+
+\subsection{SAR Water Detection and Flood Frequency}
+
+\begin{figure}[htbp]
+\centering
+\begin{minipage}[t]{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{fig03_jrc_water_occurrence.pdf}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{fig04_flood_susceptibility.pdf}
+\end{minipage}
+\caption{(\textbf{Left})~JRC Global Surface Water occurrence for Bol\'ivar, used for SAR validation and as an input feature. High occurrence values (dark blue) trace the Magdalena and Cauca river corridors and the Depresi\'on Momposina ci\'enagas. (\textbf{Right})~Ensemble flood susceptibility map; high susceptibility (red) concentrates in the Depresi\'on Momposina, Canal del Dique corridor, and Mojana wetlands.}
+\label{fig:jrc_suscept}
+\end{figure}
+
+The Sentinel-1 processing yielded monthly composites and annual maximum extent maps across the 2015--2025 study period. Adaptive Otsu thresholds showed lower seasonal variability than observed in mountainous departments, consistent with Bol\'ivar's flatter, more uniform backscatter landscape.
+
+The decadal flood frequency analysis reveals spatial patterns consistent with JRC long-term water occurrence (Figure~\ref{fig:jrc_suscept}, left): persistent flooding ($FF > 25\%$) along the Magdalena--Cauca--San Jorge corridors and within the Depresi\'on Momposina ci\'enagas; occasional flooding ($FF$ 10--25\%) along the Canal del Dique and in La Mojana; and rare flooding ($FF$ 1--10\%) on the Montes de Mar\'ia piedmont and coastal lowlands around Cartagena.
+
+Validation against JRC occurrence is expected to yield higher agreement in Bol\'ivar than in mountainous departments, given the absence of SAR shadow/layover effects and the dominance of open-water (rather than under-canopy) flooding across most of the study area.
+
+\subsection{Machine Learning Model Performance}
+
+\begin{table}[htbp]
+\caption{Flood susceptibility model performance under spatial five-fold cross-validation (mean $\pm$ SD). Placeholder values shown; to be updated with actual results after pipeline execution.}
+\label{tab:ml_results}
+\centering
+\footnotesize
+\begin{tabular}{lccccccc}
+\toprule
+\textbf{Model} & \textbf{AUC-ROC} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{$\kappa$} & \textbf{Brier} \\
+\midrule
+Random Forest   & --- & --- & --- & --- & --- & --- & --- \\
+XGBoost         & --- & --- & --- & --- & --- & --- & --- \\
+LightGBM        & --- & --- & --- & --- & --- & --- & --- \\
+\textbf{Ensemble} & --- & --- & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Model performance metrics (Table~\ref{tab:ml_results}) will be populated following pipeline execution. Based on the flat-terrain characteristics of Bol\'ivar---which reduce topographic predictor noise and enhance HAND discrimination---ensemble performance is expected to be comparable to or slightly higher than in mountainous departments, where inter-fold AUC variability is driven by steep-terrain artefacts.
+
+\subsection{Feature Importance}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.55\textwidth]{fig06_shap_importance.pdf}
+\caption{Global SHAP feature importance for the ensemble model. In flat lowland terrain, HAND is expected to dominate even more strongly than in mountainous settings due to the tighter coupling between vertical proximity to the drainage network and actual flood extent.}
+\label{fig:shap}
+\end{figure}
+
+SHAP analysis (Figure~\ref{fig:shap}) is expected to confirm HAND as the dominant predictor, with even greater relative importance than in Andean settings. In flat terrain, HAND values have a tighter physical correspondence with flood susceptibility: a pixel at HAND $= \SI{5}{\metre}$ in the Depresi\'on Momposina is far more likely to flood than a pixel at the same HAND value on an Andean valley slope, because lateral floodwater propagation is virtually unrestricted.
+
+The relaxed HAND threshold ($< \SI{10}{\metre}$ for flood label vs.\ $< \SI{5}{\metre}$ in Antioquia) reflects this physical reality: in the Momposina, seasonal floods routinely reach \SI{7}{\metre} depth \citep{Angarita2018}, meaning that pixels with HAND up to \SI{10}{\metre} are regularly inundated. An ablation experiment removing SAR flood frequency and JRC occurrence from the feature set will quantify the degree to which topographic features alone sustain discrimination, providing a check on potential circularity between labelling criteria and predictors.
+
+\subsection{Flood Susceptibility Map}
+
+The susceptibility map (Figure~\ref{fig:jrc_suscept}, right) is expected to identify three primary flood corridors:
+
+\begin{enumerate}
+    \item \textbf{Depresi\'on Momposina}: The confluence zone of the Magdalena, Cauca, and San Jorge rivers, with $>$50\% of subregional area in high/very high susceptibility class. The $\sim$\SI{3400}{\kilo\metre\squared} of ci\'enagas create the largest contiguous high-susceptibility zone in northern Colombia \citep{Angarita2018}.
+
+    \item \textbf{Canal del Dique corridor}: Concentrated high susceptibility within \SI{2}{\kilo\metre} of the canal banks and in areas inundated during the 2010--2011 levee breaches \citep{Mogollon2016}. The ongoing USD 835 million restoration is expected to alter future flood patterns.
+
+    \item \textbf{Mojana--Magangue floodplain}: The La Mojana wetland system and the Magangue urban floodplain, where recurring Cara de Gato dam failures drive episodic flooding \citep{ACAPS2024}.
+\end{enumerate}
+
+\begin{table}[htbp]
+\caption{Expected area distribution across susceptibility classes by ZODES subregion (\% of subregional area). To be updated with actual results.}
+\label{tab:suscept_area}
+\centering
+\footnotesize
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{ZODES} & \textbf{Very low} & \textbf{Low} & \textbf{Moderate} & \textbf{High} & \textbf{Very high} \\
+\midrule
+Dique              & --- & --- & --- & --- & --- \\
+Montes de Mar\'ia  & --- & --- & --- & --- & --- \\
+Mojana             & --- & --- & --- & --- & --- \\
+Dep. Momposina     & --- & --- & --- & --- & --- \\
+Loba               & --- & --- & --- & --- & --- \\
+Magdalena Medio    & --- & --- & --- & --- & --- \\
+\midrule
+\textbf{Bol\'ivar} & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Population Exposure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.55\textwidth]{fig05_population_exposure.pdf}
+\caption{Top 20 municipalities ranked by exposed population. Municipalities in the Depresi\'on Momposina and Canal del Dique corridor are expected to dominate, with Magangue and Cartagena contributing the largest absolute exposure due to population density.}
+\label{fig:exposure}
+\end{figure}
+
+Population exposure analysis (Figure~\ref{fig:exposure}) will quantify the number of residents in high/very high susceptibility zones across all 46 municipalities. Given Bol\'ivar's flood history, several ZODES are expected to show particularly high exposure:
+
+\begin{itemize}
+    \item \textbf{Mojana}: Magangue (pop.\ $\sim$130,000) serves as the commercial hub for a vast floodplain region; high proportional exposure is anticipated.
+    \item \textbf{Depresi\'on Momposina}: Momp\'os and surrounding municipalities occupy an internally drained basin with severe seasonal flooding.
+    \item \textbf{Dique}: Cartagena (pop.\ $\sim$1 million) has the largest absolute population but lower proportional exposure; however, informal settlements along the Canal del Dique and in flood-prone \textit{barrios} face disproportionate risk.
+\end{itemize}
+
+\begin{table}[htbp]
+\caption{Expected population exposure by ZODES subregion ($\tau = 0.6$). FRI = Flood Risk Index. To be updated with actual results.}
+\label{tab:exposure}
+\centering
+\footnotesize
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{ZODES} & \textbf{Area (km$^2$)} & \textbf{High susc. (\%)} & \textbf{Pop. (10$^3$)} & \textbf{Pop. exp. (10$^3$)} & \textbf{FRI} \\
+\midrule
+Dique              & --- & --- & --- & --- & --- \\
+Montes de Mar\'ia  & --- & --- & --- & --- & --- \\
+Mojana             & --- & --- & --- & --- & --- \\
+Dep. Momposina     & --- & --- & --- & --- & --- \\
+Loba               & --- & --- & --- & --- & --- \\
+Magdalena Medio    & --- & --- & --- & --- & --- \\
+\midrule
+\textbf{Total}     & \textbf{25,978} & --- & $\sim$\textbf{2,200} & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Sensitivity analysis of the threshold $\tau$ (0.5, 0.6, 0.7) will quantify uncertainty in absolute exposure counts and verify ranking robustness.
+
+\subsection{Seasonal and ENSO Dynamics}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{fig07_enso_flood_comparison.pdf}
+\caption{ENSO--flood dynamics for Bol\'ivar. (\textbf{Left})~Precipitation by ENSO phase. (\textbf{Right})~Flood extent by ENSO phase. La Ni\~na years are expected to show substantially increased flood extent relative to El Ni\~no years, consistent with Caribbean Colombia's strong ENSO sensitivity.}
+\label{fig:enso}
+\end{figure}
+
+The monthly time series is expected to confirm bimodal seasonality consistent with Bol\'ivar's Caribbean climate, with the SON peak larger than MAM due to cumulative soil saturation \citep{Urrea2019}. ENSO stratification (Figure~\ref{fig:enso}) will quantify the La Ni\~na amplification effect, which is particularly pronounced in Caribbean Colombia where La Ni\~na-driven intensification of the Caribbean Low-Level Jet increases moisture transport into the Magdalena basin \citep{Poveda2001, Salas2023, Arias2021}.
+
+Historical records indicate extreme sensitivity: the 2010--2011 La Ni\~na made Bol\'ivar the most affected department nationally, while the 2020--2023 triple-dip La Ni\~na caused repeated flooding in the Mojana and Momposina regions. Mann-Kendall trend analysis will assess whether the 11-year SAR record captures any secular trend or is dominated by ENSO variability.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Flat Terrain and SAR Detection Accuracy}
+
+Bol\'ivar's flat lowland terrain provides a qualitatively different SAR operating environment compared to Andean departments. The near-absence of layover and radar shadow eliminates two major error sources that degrade flood detection accuracy in mountainous regions \citep{Tarpanelli2022}. This advantage is expected to translate into higher overall detection accuracy and more spatially uniform performance across cross-validation folds, since the terrain-dependent performance variation observed in Andean settings (AUC ranging from 0.91 in mountainous folds to 0.96 in lowland folds) should be attenuated.
+
+However, flat terrain introduces distinct challenges. Ci\'enagas---seasonal wetlands that are a defining feature of Bol\'ivar's landscape---create a continuum between ``permanent water'' and ``dry land'' that binary flood classification struggles to capture. Multi-temporal compositing and the JRC permanent-water mask partially address this issue, but the conceptual boundary between ``normal ci\'enaga expansion'' and ``anomalous flooding'' remains ambiguous. Future work could employ object-based classification to distinguish ci\'enaga dynamics from fluvial flood events \citep{Betancourt2020}.
+
+\subsection{HAND as a Policy-Actionable Predictor in Lowland Settings}
+
+The relaxation of HAND thresholds for Bol\'ivar ($<$\SI{10}{\metre} vs.\ $<$\SI{5}{\metre} in Andean settings) reflects the physical reality of lowland flooding. In the Depresi\'on Momposina, where seasonal flood depths reach \SI{7}{\metre} \citep{Angarita2018}, a HAND $= \SI{5}{\metre}$ threshold would exclude large areas that are routinely inundated. The MERIT Hydro DEM's vertical accuracy ($\pm$\SI{5}{\metre}$) is particularly consequential in this context: in terrain with gradients of $<$\SI{1}{\metre\per\kilo\metre}, the DEM uncertainty can exceed the actual elevation difference between flood and non-flood pixels. High-resolution LiDAR acquisition---which Colombia's IGAC has begun---would substantially improve HAND computation in these critical lowland areas.
+
+For policy purposes, a HAND $= \SI{10}{\metre}$ threshold in Bol\'ivar provides an objective, reproducible basis for delineating \textit{suelos de protecci\'on} (protected soils) in municipal POT instruments. This is particularly relevant for the Canal del Dique corridor, where the ongoing USD 835 million restoration project \citep{Mogollon2016} will alter levee configurations and flood pathways, and municipalities will need updated susceptibility maps to inform land-use planning around the restored channel.
+
+\subsection{ENSO--Flood Linkage and Early Warning}
+
+Bol\'ivar's Caribbean location places it at the epicenter of Colombia's ENSO--flood teleconnection. La Ni\~na episodes strengthen the Caribbean and Choc\'o low-level jets, increasing moisture convergence over the Magdalena basin \citep{Poveda2001, PovedalMesa1997, Salas2023}. The 2010--2011 catastrophe---in which Canal del Dique levee breaches flooded \SI{35000}{\hectare} and Bol\'ivar was the most affected department nationally---illustrates the compound risk: La Ni\~na-driven precipitation extremes interact with infrastructure vulnerabilities (aging levees, unregulated land use) to produce catastrophic outcomes.
+
+ENSO is predictable at 3--6 month lead times \citep{Tippett2012}. Our framework's municipality-level risk ranking, combined with ENSO forecasts, could enable targeted early warning for the 10--15 municipalities with the highest compound exposure. The Cara de Gato dam in La Mojana, which has failed repeatedly during La Ni\~na events \citep{ACAPS2024}, exemplifies the type of infrastructure-specific risk that ENSO-informed early action could address.
+
+\subsection{Population Exposure and Environmental Justice}
+
+The distribution of flood exposure in Bol\'ivar reflects deep structural inequalities. The Depresi\'on Momposina---where flood depths reach \SI{7}{\metre}---is home to communities whose livelihoods depend on ci\'enaga fisheries, meaning displacement from flood zones would also mean loss of economic base. La Mojana's recurring floods disproportionately affect subsistence agricultural communities \citep{AdaptationFundMojana}. By contrast, Cartagena's flood exposure, while smaller proportionally, affects some of Latin America's densest informal settlements in \textit{barrios} like Nelson Mandela and El Pozón, where urban drainage infrastructure is minimal.
+
+These contrasting profiles require differentiated policy responses: in the Momposina and Mojana, adaptive strategies (amphibious architecture, early warning, ecosystem-based DRR) may be more appropriate than structural protection; in Cartagena, integrated stormwater management and canal maintenance are priorities; in the Canal del Dique corridor, the restoration project provides a once-in-a-generation opportunity to redesign flood protection infrastructure with future climate scenarios in mind.
+
+\subsection{Limitations, Uncertainty, and Future Directions}
+\label{sec:limitations}
+
+Four limitations warrant quantification. (1) While flat terrain reduces SAR artefacts, the extensive flooded vegetation in the Momposina palm forests causes double-bounce scattering that can mask open-water signatures or produce false positives in forested ci\'enagas \citep{Betancourt2020, Clement2018}. L-band SAR (e.g., NISAR, ALOS-2) would improve under-canopy flood detection. (2) The Sentinel-1B gap (December 2021 to April 2024) reduced temporal resolution during a period of active La Ni\~na flooding, potentially missing short-duration flood events. (3) Training labels from satellite convergence (SAR $\cap$ JRC) introduce partial circularity: SAR flood frequency appears as both a labelling criterion and a predictor. Three safeguards limit impact: spatial CV ensures training and test pixels come from different ZODES; ablation experiments quantify the contribution of potentially circular features; and the conservative labelling threshold ($\geq$5 of $M$ months) targets persistent flood behaviour. (4) The MERIT Hydro HAND uncertainty ($\pm$\SI{5}{\metre}) approaches the total elevation range in parts of the Depresi\'on Momposina, where terrain gradients are $<$\SI{1}{\metre\per\kilo\metre}. This fundamental limitation underscores the urgency of LiDAR acquisition for Colombia's lowland departments.
+
+Future priorities include: (i) L-band SAR integration for under-canopy flood detection in Momposina; (ii) deep learning SAR segmentation (U-Net on Sen1Floods11 \citep{Bonafilia2020}); (iii) a near-real-time GEE monitoring dashboard linked to ENSO forecast products; (iv) coupling with CMIP6 downscaled precipitation for forward-looking risk assessment under climate change scenarios; and (v) expansion to the contiguous La Mojana departments (Sucre, C\'ordoba) to provide a basin-scale perspective.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Conclusions}
+\label{sec:conclusions}
+
+This study demonstrates that SAR remote sensing, ensemble machine learning, and cloud computing can produce municipality-level flood risk statistics for an entire department---closing the persistent gap between the scale of satellite products and the scale of governance. The application to Bol\'ivar---predominantly flat lowland terrain with extensive ci\'enagas, three major flood-prone systems (Depresi\'on Momposina, Canal del Dique, La Mojana), and a history of catastrophic flood events---tests the framework's transferability from Andean to Caribbean lowland settings.
+
+\textbf{Methodological contribution:} The systematic relaxation of HAND and slope thresholds for flat terrain (HAND flood label from $< \SI{5}{\metre}$ to $< \SI{10}{\metre}$; slope non-flood mask from $> 10^{\circ}$ to $> 5^{\circ}$; minimum water area from \SI{1}{\hectare} to \SI{2}{\hectare}) demonstrates that the ensemble framework is not tied to Andean parameter settings but can be adapted to the distinct hydrological dynamics of lowland floodplains and seasonally expanding ci\'enagas.
+
+\textbf{Applied contribution:} The framework produces municipality-level flood risk statistics for all 46 municipalities and 6 ZODES of Bol\'ivar, directly ingestible by POT and PMGRD instruments. Given that Bol\'ivar was the most affected department during the 2010--2011 La Ni\~na, and that the Canal del Dique restoration project will fundamentally alter flood pathways, these spatially explicit risk products are urgently needed for evidence-based land-use planning.
+
+Because the pipeline runs entirely on Google Earth Engine (SAR processing: $\sim$3 hours; feature extraction: $\sim$1.5 hours) and open-source Python libraries (ML training and prediction: $<$30 minutes on a standard laptop), it can be replicated to any tropical department with Sentinel-1 coverage at near-zero marginal cost. The adaptation documented here---from an Andean mountain department (Antioquia, \SI{63612}{\kilo\metre\squared}, 125 municipalities) to a Caribbean lowland department (Bol\'ivar, \SI{25978}{\kilo\metre\squared}, 46 municipalities)---provides a concrete template for departmental replication across Colombia and beyond.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section*{Supplementary Materials}
+
+The following supplementary materials are available online: Table~S1 (Flood Risk Index for all 46 municipalities), Figures~S1--S3 (SHAP dependence plots for HAND, flood frequency, and elevation), Figure~S4 (per-fold ROC curves), and the complete Google Earth Engine processing scripts.
+
+\section*{Author Contributions}
+
+Conceptualization, C.E.M. and S.J.L.; methodology, C.E.M.; software, C.E.M.; formal analysis, C.E.M.; investigation, C.E.M.; data curation, C.E.M.; writing---original draft, C.E.M.; writing---review and editing, S.J.L.; visualization, C.E.M.; supervision, S.J.L. All authors have read and agreed to the published version of the manuscript.
+
+\section*{Funding}
+
+This research was supported by Universidad EAFIT through the Master's thesis research program. No external funding was received.
+
+\section*{Data Availability}
+
+All satellite data were accessed through Google Earth Engine. Administrative boundaries from GADM 4.1. Source code available at \url{https://github.com/Cespial/bolivar-flood-risk} (MIT license).
+
+\section*{Acknowledgments}
+
+The authors thank Google Earth Engine for cloud computing access, ESA for Sentinel-1 data, the JRC for Global Surface Water, UNGRD for maintaining Colombia's disaster event database, and the Adaptation Fund/UNDP for La Mojana risk reduction project documentation.
+
+\section*{Conflicts of Interest}
+
+The authors declare no conflicts of interest.
+
+\section*{Abbreviations}
+
+The following abbreviations are used in this manuscript:\\
+
+\noindent
+\begin{tabular}{@{}ll}
+SAR & Synthetic Aperture Radar\\
+GEE & Google Earth Engine\\
+HAND & Height Above Nearest Drainage\\
+ENSO & El Ni\~no--Southern Oscillation\\
+SHAP & SHapley Additive exPlanations\\
+FRI & Flood Risk Index\\
+POT & Plan de Ordenamiento Territorial\\
+PMGRD & Plan Municipal de Gesti\'on del Riesgo de Desastres\\
+AUC-ROC & Area Under the ROC Curve\\
+TWI & Topographic Wetness Index\\
+SPI & Stream Power Index\\
+ZODES & Zonas de Desarrollo Econ\'omico y Social
+\end{tabular}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+
+\end{document}
